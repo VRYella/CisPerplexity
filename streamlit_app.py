@@ -195,6 +195,150 @@ class StructuralFeatureEncoder:
         
         return features
 
+class KadaneMaxSubarray:
+    """Implementation of Kadane's Algorithm for finding maximum/minimum subarray sums"""
+    
+    @staticmethod
+    def find_min_subarray(arr: np.ndarray, min_length: int = 1) -> Tuple[int, int, float]:
+        """
+        Find contiguous subarray with minimum sum using modified Kadane's algorithm
+        
+        Args:
+            arr: Array of values (e.g., perplexity values)
+            min_length: Minimum length of subarray to consider
+            
+        Returns:
+            Tuple of (start_index, end_index, min_sum)
+        """
+        if len(arr) < min_length:
+            return 0, 0, float('inf')
+        
+        n = len(arr)
+        min_sum = float('inf')
+        current_sum = 0
+        start = 0
+        end = 0
+        temp_start = 0
+        
+        for i in range(n):
+            current_sum += arr[i]
+            
+            if current_sum < min_sum and (i - temp_start + 1) >= min_length:
+                min_sum = current_sum
+                start = temp_start
+                end = i
+            
+            if current_sum > 0:
+                current_sum = 0
+                temp_start = i + 1
+        
+        # If no negative sum found, find minimum single element
+        if min_sum == float('inf'):
+            min_idx = np.argmin(arr)
+            return min_idx, min_idx, arr[min_idx]
+        
+        return start, end, min_sum
+    
+    @staticmethod
+    def find_min_average_subarray(arr: np.ndarray, min_length: int = 1) -> Tuple[int, int, float]:
+        """
+        Find contiguous subarray with minimum average value
+        
+        Args:
+            arr: Array of values
+            min_length: Minimum length of subarray
+            
+        Returns:
+            Tuple of (start_index, end_index, min_average)
+        """
+        if len(arr) < min_length:
+            return 0, 0, float('inf')
+        
+        n = len(arr)
+        min_avg = float('inf')
+        best_start = 0
+        best_end = 0
+        
+        # Convert to float to handle large values
+        work_arr = arr.astype(np.float64)
+        
+        # Try all possible subarrays of length >= min_length
+        for length in range(min_length, n + 1):
+            for start in range(n - length + 1):
+                end = start + length - 1
+                subarray_sum = np.sum(work_arr[start:end+1])
+                avg = subarray_sum / length
+                
+                if avg < min_avg:
+                    min_avg = avg
+                    best_start = start
+                    best_end = end
+        
+        return best_start, best_end, min_avg
+    
+    @staticmethod
+    def find_multiple_min_regions(arr: np.ndarray, min_length: int = 1, 
+                                 num_regions: int = 3, overlap_threshold: float = 0.5) -> List[Tuple[int, int, float]]:
+        """
+        Find multiple non-overlapping minimum regions using Kadane's algorithm
+        
+        Args:
+            arr: Array of values
+            min_length: Minimum length of each region
+            num_regions: Maximum number of regions to find
+            overlap_threshold: Maximum allowed overlap between regions (0-1)
+            
+        Returns:
+            List of tuples (start_index, end_index, average_value)
+        """
+        if len(arr) < min_length:
+            return []
+        
+        regions = []
+        excluded_indices = set()
+        
+        # Convert to float to handle infinity values
+        work_arr = arr.astype(np.float64)
+        max_val = np.max(work_arr) * 10  # Use large value instead of infinity
+        
+        for _ in range(num_regions):
+            # Create modified array excluding already found regions
+            modified_arr = work_arr.copy()
+            for idx in excluded_indices:
+                modified_arr[idx] = max_val
+            
+            # Find next minimum region
+            start, end, avg = KadaneMaxSubarray.find_min_average_subarray(modified_arr, min_length)
+            
+            if avg >= max_val:  # No more valid regions
+                break
+            
+            # Check for significant overlap with existing regions
+            has_overlap = False
+            region_length = end - start + 1
+            
+            for existing_start, existing_end, _ in regions:
+                overlap_start = max(start, existing_start)
+                overlap_end = min(end, existing_end)
+                
+                if overlap_start <= overlap_end:
+                    overlap_length = overlap_end - overlap_start + 1
+                    if overlap_length / region_length > overlap_threshold:
+                        has_overlap = True
+                        break
+            
+            if not has_overlap:
+                regions.append((start, end, avg))
+                # Mark indices as excluded
+                for i in range(start, end + 1):
+                    excluded_indices.add(i)
+            
+            # If we can't find more non-overlapping regions, break
+            if len(excluded_indices) >= len(arr) * 0.8:  # If 80% of array is excluded
+                break
+        
+        return regions
+
 class MotifDetector:
     """Detect promoter motifs in DNA sequences"""
     
@@ -269,52 +413,57 @@ class MotifDetector:
         return motif_densities
 
 class PromoterPredictor:
-    """Integrated promoter prediction using perplexity, structural features, and motifs"""
+    """Integrated promoter prediction using perplexity, structural features, and motifs with Kadane's Algorithm"""
     
     def __init__(self, encoding_dict_path: str = None):
         """Initialize predictor components"""
         self.perplexity_calc = PerplexityCalculator()
         self.feature_encoder = StructuralFeatureEncoder(encoding_dict_path)
         self.motif_detector = MotifDetector()
+        self.kadane = KadaneMaxSubarray()
     
     def predict_promoters(self, sequence: str, window_size: int = 100, 
+                         perplexity_window: int = 10,
                          perplexity_threshold: float = None) -> Dict:
         """
-        Predict promoter regions using integrated approach
+        Predict promoter regions using Kadane's Algorithm for maximum subarray sum on low perplexity regions
         
         Args:
             sequence: DNA sequence
-            window_size: Window size for analysis
+            window_size: Window size for Kadane's algorithm analysis (default 100)
+            perplexity_window: Window size for perplexity calculation (default 10)
             perplexity_threshold: Threshold for low perplexity (auto-calculated if None)
             
         Returns:
-            Dictionary with prediction results
+            Dictionary with prediction results including Kadane's algorithm results
         """
         results = {
             'sequence_length': len(sequence),
             'window_size': window_size,
+            'perplexity_window': perplexity_window,
             'perplexity': None,
             'gc_content': None,
             'structural_features': None,
             'motif_density': None,
             'motif_matches': None,
             'predicted_promoters': [],
+            'kadane_regions': [],
             'perplexity_threshold': None
         }
         
-        if len(sequence) < window_size:
+        if len(sequence) < perplexity_window:
             return results
         
-        # Calculate perplexity
-        perplexity = self.perplexity_calc.calculate_perplexity(sequence, window_size)
+        # Calculate perplexity using the specified perplexity window (default 10)
+        perplexity = self.perplexity_calc.calculate_perplexity(sequence, perplexity_window)
         results['perplexity'] = perplexity
         
         # Calculate GC content
-        gc_content = self.perplexity_calc.calculate_gc_content(sequence, window_size)
+        gc_content = self.perplexity_calc.calculate_gc_content(sequence, perplexity_window)
         results['gc_content'] = gc_content
         
         # Encode structural features
-        structural_features = self.feature_encoder.encode_sequence(sequence, window_size)
+        structural_features = self.feature_encoder.encode_sequence(sequence, perplexity_window)
         results['structural_features'] = structural_features
         
         # Calculate motif density
@@ -330,47 +479,75 @@ class PromoterPredictor:
             perplexity_threshold = np.percentile(perplexity, 25)  # Lower quartile
         results['perplexity_threshold'] = perplexity_threshold
         
-        # Predict promoter regions (low perplexity regions)
-        low_perplexity_indices = np.where(perplexity < perplexity_threshold)[0]
+        # Apply Kadane's Algorithm to find low perplexity regions
+        if len(perplexity) >= window_size:
+            # Use Kadane's algorithm to find minimum perplexity regions
+            # We want regions with minimum average perplexity (promoter-like regions)
+            min_region_length = max(window_size // 2, 20)  # Minimum meaningful region size
+            
+            # Find multiple low perplexity regions using Kadane's algorithm
+            kadane_regions = self.kadane.find_multiple_min_regions(
+                perplexity, 
+                min_length=min_region_length, 
+                num_regions=5,  # Find up to 5 regions
+                overlap_threshold=0.3  # Allow 30% overlap
+            )
+            
+            results['kadane_regions'] = kadane_regions
+            
+            # Convert Kadane's regions to promoter predictions
+            for start_window, end_window, avg_perplexity in kadane_regions:
+                # Convert window indices to sequence positions
+                start_pos = start_window
+                end_pos = min(end_window + perplexity_window - 1, len(sequence) - 1)
+                region_length = end_pos - start_pos + 1
+                
+                # Only consider regions that meet the perplexity threshold
+                if avg_perplexity <= perplexity_threshold:
+                    # Extract region sequence for motif analysis
+                    region_sequence = sequence[start_pos:end_pos+1]
+                    region_motifs = self.motif_detector.detect_motifs(region_sequence)
+                    total_motifs = sum(len(matches) for matches in region_motifs.values())
+                    
+                    # Calculate confidence based on:
+                    # 1. How much lower the perplexity is compared to the maximum
+                    # 2. Number of motifs found in the region
+                    # 3. Length of the region (longer regions are more confident)
+                    perplexity_score = 1 - (avg_perplexity / np.max(perplexity)) if len(perplexity) > 0 else 0
+                    motif_score = min(total_motifs / region_length * 1000, 1.0)  # Normalize by length
+                    length_score = min(region_length / 200, 1.0)  # Regions around 200bp get max score
+                    
+                    confidence = (perplexity_score * 0.5 + motif_score * 0.3 + length_score * 0.2)
+                    confidence = min(confidence, 1.0)
+                    
+                    # Apply structural features analysis to the region
+                    region_structural_features = {}
+                    if structural_features:
+                        for feature_name, feature_values in structural_features.items():
+                            if start_window < len(feature_values) and end_window < len(feature_values):
+                                region_feature_values = feature_values[start_window:end_window+1]
+                                region_structural_features[feature_name] = {
+                                    'mean': np.mean(region_feature_values),
+                                    'std': np.std(region_feature_values),
+                                    'values': region_feature_values.tolist()
+                                }
+                    
+                    results['predicted_promoters'].append({
+                        'start': start_pos,
+                        'end': end_pos,
+                        'length': region_length,
+                        'avg_perplexity': avg_perplexity,
+                        'motif_count': total_motifs,
+                        'confidence': confidence,
+                        'method': 'kadane_algorithm',
+                        'window_start': start_window,
+                        'window_end': end_window,
+                        'structural_features': region_structural_features,
+                        'region_motifs': {k: v for k, v in region_motifs.items() if v}  # Only non-empty motifs
+                    })
         
-        # Group consecutive indices into regions
-        if len(low_perplexity_indices) > 0:
-            regions = []
-            current_start = low_perplexity_indices[0]
-            current_end = low_perplexity_indices[0]
-            
-            for i in range(1, len(low_perplexity_indices)):
-                if low_perplexity_indices[i] == current_end + 1:
-                    current_end = low_perplexity_indices[i]
-                else:
-                    regions.append((current_start, current_end + window_size - 1))
-                    current_start = low_perplexity_indices[i]
-                    current_end = low_perplexity_indices[i]
-            
-            # Add the last region
-            regions.append((current_start, current_end + window_size - 1))
-            
-            # Calculate confidence for each region
-            for start, end in regions:
-                region_length = end - start + 1
-                region_perplexity = np.mean(perplexity[start:min(start + region_length - window_size + 1, len(perplexity))])
-                
-                # Count motifs in region
-                region_sequence = sequence[start:end+1]
-                region_motifs = self.motif_detector.detect_motifs(region_sequence)
-                total_motifs = sum(len(matches) for matches in region_motifs.values())
-                
-                confidence = (1 - region_perplexity / np.max(perplexity)) * 0.7 + (total_motifs / region_length * 1000) * 0.3
-                confidence = min(confidence, 1.0)
-                
-                results['predicted_promoters'].append({
-                    'start': start,
-                    'end': end,
-                    'length': region_length,
-                    'avg_perplexity': region_perplexity,
-                    'motif_count': total_motifs,
-                    'confidence': confidence
-                })
+        # Sort predicted promoters by confidence (descending)
+        results['predicted_promoters'].sort(key=lambda x: x['confidence'], reverse=True)
         
         return results
 
@@ -382,21 +559,33 @@ def main():
     
     st.markdown("""
     This tool predicts promoter regions in DNA sequences using an integrated approach that combines:
-    - **Dinucleotide perplexity analysis** (promoters typically have lower perplexity)
+    - **Dinucleotide perplexity analysis** with Kadane's Algorithm for optimal low-perplexity region detection
     - **Structural features** (conformational and physicochemical properties)
     - **Promoter motif detection** (TATA-box, Initiator elements, etc.)
+    
+    **New Feature**: Uses Kadane's Algorithm (Maximum Subarray Sum) adapted for finding minimum perplexity regions 
+    with configurable window sizes for perplexity calculation (default 10bp) and region analysis (default 100bp).
     """)
     
     # Sidebar for parameters
     st.sidebar.header("⚙️ Analysis Parameters")
     
     window_size = st.sidebar.slider(
-        "Window Size (bp)",
+        "Analysis Window Size (bp)",
         min_value=50,
         max_value=500,
         value=100,
         step=10,
-        help="Size of sliding window for analysis"
+        help="Size of window for Kadane's algorithm analysis"
+    )
+    
+    perplexity_window = st.sidebar.slider(
+        "Perplexity Window Size (bp)",
+        min_value=5,
+        max_value=50,
+        value=10,
+        step=1,
+        help="Size of sliding window for perplexity calculation"
     )
     
     perplexity_threshold = st.sidebar.slider(
@@ -449,8 +638,9 @@ def main():
         sequence = re.sub(r'[^ATGC]', '', sequence.upper())
         st.write(f"**Sequence length:** {len(sequence)} bp")
         
-        if len(sequence) < window_size:
-            st.error(f"Sequence too short! Minimum length required: {window_size} bp")
+        # Clean sequence
+        if len(sequence) < perplexity_window:
+            st.error(f"Sequence too short! Minimum length required: {perplexity_window} bp")
             return
         
         # Analysis button
@@ -469,10 +659,11 @@ def main():
                 results = predictor.predict_promoters(
                     sequence, 
                     window_size=window_size,
+                    perplexity_window=perplexity_window,
                     perplexity_threshold=np.percentile(
-                        predictor.perplexity_calc.calculate_perplexity(sequence, window_size),
+                        predictor.perplexity_calc.calculate_perplexity(sequence, perplexity_window),
                         perplexity_threshold
-                    ) if len(sequence) >= window_size else None
+                    ) if len(sequence) >= perplexity_window else None
                 )
             
             # Display results
@@ -490,7 +681,10 @@ def display_results(results: Dict, sequence: str):
         st.metric("Sequence Length", f"{results['sequence_length']:,} bp")
     
     with col2:
-        st.metric("Window Size", f"{results['window_size']} bp")
+        if 'perplexity_window' in results:
+            st.metric("Perplexity Window", f"{results['perplexity_window']} bp")
+        else:
+            st.metric("Window Size", f"{results['window_size']} bp")
     
     with col3:
         if results['perplexity'] is not None:
@@ -505,7 +699,7 @@ def display_results(results: Dict, sequence: str):
         st.markdown('<h2 class="subheader">🎯 Predicted Promoter Regions</h2>', unsafe_allow_html=True)
         
         for i, promoter in enumerate(results['predicted_promoters']):
-            with st.expander(f"Promoter Region {i+1} (Position {promoter['start']}-{promoter['end']})"):
+            with st.expander(f"Promoter Region {i+1} (Position {promoter['start']}-{promoter['end']}) - Method: {promoter.get('method', 'threshold')}"):
                 col1, col2, col3, col4 = st.columns(4)
                 
                 with col1:
@@ -516,6 +710,37 @@ def display_results(results: Dict, sequence: str):
                     st.metric("Motif Count", promoter['motif_count'])
                 with col4:
                     st.metric("Confidence", f"{promoter['confidence']:.2%}")
+                
+                # Show additional Kadane's algorithm info if available
+                if 'window_start' in promoter and 'window_end' in promoter:
+                    st.write(f"**Kadane's Window:** {promoter['window_start']} - {promoter['window_end']}")
+                
+                # Show structural features if available
+                if 'structural_features' in promoter and promoter['structural_features']:
+                    st.write("**Structural Features:**")
+                    feature_data = []
+                    for feature_name, feature_info in promoter['structural_features'].items():
+                        feature_data.append({
+                            'Feature': feature_name,
+                            'Mean': f"{feature_info['mean']:.3f}",
+                            'Std Dev': f"{feature_info['std']:.3f}"
+                        })
+                    if feature_data:
+                        st.dataframe(pd.DataFrame(feature_data), use_container_width=True)
+                
+                # Show region-specific motifs if available
+                if 'region_motifs' in promoter and promoter['region_motifs']:
+                    st.write("**Motifs in this region:**")
+                    region_motif_data = []
+                    for motif_name, matches in promoter['region_motifs'].items():
+                        for start, end, seq in matches:
+                            region_motif_data.append({
+                                'Motif': motif_name,
+                                'Position': f"{start}-{end}",
+                                'Sequence': seq
+                            })
+                    if region_motif_data:
+                        st.dataframe(pd.DataFrame(region_motif_data), use_container_width=True)
                 
                 # Show sequence
                 promoter_seq = sequence[promoter['start']:promoter['end']+1]
